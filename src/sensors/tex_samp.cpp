@@ -90,8 +90,10 @@ origin="1, 1, 1" target="1, 2, 1" up="0, 0, 1"/>
 
  */
 
+#include <iostream>
+
 template <typename Float, typename Spectrum>
-class PerspectiveCamera final : public ProjectiveCamera<Float, Spectrum> {
+class TexSampCamera final : public ProjectiveCamera<Float, Spectrum> {
 public:
     MTS_IMPORT_BASE(ProjectiveCamera, m_world_transform, m_needs_sample_3,
                     m_film, m_sampler, m_resolution, m_shutter_open,
@@ -102,7 +104,9 @@ public:
     //! @{ \name Constructors
     // =============================================================
 
-    PerspectiveCamera(const Properties &props) : Base(props) {
+    const Shape *sampled_shape;
+
+    TexSampCamera(const Properties &props) : Base(props) {
         ScalarVector2i size = m_film->size();
         m_x_fov             = parse_fov(props, size.x() / (float) size.y());
 
@@ -111,6 +115,21 @@ public:
                   "allowed!");
 
         update_camera_transforms();
+
+        auto objs = props.objects(true);
+        for (const auto &obj : objs) {
+            const Shape *shape = dynamic_cast<const Shape *>(obj.second.get());
+            if (shape) {
+                Log(Warn, "TexCam using shape: %s", obj.second->id());
+                sampled_shape = shape;
+            }
+        }
+
+        // auto pmgr = PluginManager::instance();
+        // Properties props_sampler("independent");
+        // props_sampler.set_int("sample_count", m_sampler->sample_count());
+        // m_uv_sampler = static_cast<Sampler
+        // *>(pmgr->create_object<Sampler>(props_sampler));
 
         m_principal_point_offset =
             ScalarPoint2f(props.float_("principal_point_offset_x", 0.f),
@@ -187,9 +206,10 @@ public:
         return std::make_pair(ray, wav_weight);
     }
 
-    std::pair<RayDifferential3f, Spectrum> sample_ray_differential(
-        Float time, Float wavelength_sample, const Point2f &position_sample,
-        const Point2f & /*aperture_sample*/, Mask active) const override {
+    std::pair<RayDifferential3f, Spectrum>
+    sample_ray_differential(Float time, Float wavelength_sample,
+                            const Point2f &s_xy, const Point2f &s_zw,
+                            Mask active) const override {
         MTS_MASKED_FUNCTION(ProfilerPhase::EndpointSampleRay, active);
 
         auto [wavelengths, wav_weight] =
@@ -198,11 +218,17 @@ public:
         ray.time        = time;
         ray.wavelengths = wavelengths;
 
+        auto trafo  = m_world_transform->eval(ray.time, active);
+        auto Itrafo = trafo.inverse();
+
         // Compute the sample position on the near plane (local camera space).
-        Point3f near_p =
-            m_sample_to_camera *
-            Point3f(position_sample.x() + m_principal_point_offset.x(),
-                    position_sample.y() + m_principal_point_offset.y(), 0.f);
+        SurfaceInteraction3f pt =
+            sampled_shape->eval_parameterization(s_xy, active);
+        Point3f near_p = Itrafo.transform_affine(pt.p);
+        // Point3f near_p = m_sample_to_camera *
+        //                  Point3f(s_xy.x() + m_principal_point_offset.x(),
+        //                          s_xy.y() + m_principal_point_offset.y(),
+        //                          0.f);
 
         // Convert into a normalized ray direction; adjust the ray interval
         // accordingly.
@@ -211,9 +237,8 @@ public:
         ray.mint    = m_near_clip * inv_z;
         ray.maxt    = m_far_clip * inv_z;
 
-        auto trafo = m_world_transform->eval(ray.time, active);
-        ray.o      = trafo.transform_affine(Point3f(0.f));
-        ray.d      = trafo * d;
+        ray.o = trafo.transform_affine(Point3f(0.f));
+        ray.d = trafo * d;
         ray.update();
 
         ray.o_x = ray.o_y = ray.o;
@@ -305,7 +330,7 @@ public:
         using string::indent;
 
         std::ostringstream oss;
-        oss << "PerspectiveCamera[" << std::endl
+        oss << "TexSampCamera[" << std::endl
             << "  x_fov = " << m_x_fov << "," << std::endl
             << "  near_clip = " << m_near_clip << "," << std::endl
             << "  far_clip = " << m_far_clip << "," << std::endl
@@ -321,7 +346,10 @@ public:
     }
 
     MTS_DECLARE_CLASS()
-    // private:
+private:
+    // const Shape* sampled_shape = nullptr;
+    // mutable ref<Sampler> m_uv_sampler;
+
     ScalarTransform4f m_camera_to_sample;
     ScalarTransform4f m_sample_to_camera;
     ScalarBoundingBox2f m_image_rect;
@@ -331,6 +359,6 @@ public:
     ScalarVector2f m_principal_point_offset;
 };
 
-MTS_IMPLEMENT_CLASS_VARIANT(PerspectiveCamera, ProjectiveCamera)
-MTS_EXPORT_PLUGIN(PerspectiveCamera, "Perspective Camera");
+MTS_IMPLEMENT_CLASS_VARIANT(TexSampCamera, ProjectiveCamera)
+MTS_EXPORT_PLUGIN(TexSampCamera, "Perspective Camera");
 NAMESPACE_END(mitsuba)

@@ -83,9 +83,10 @@ public:
      *    weights. The latter account for the difference between the profile
      *    and the actual used sampling density function.
      */
-    virtual std::pair<Ray3f, Spectrum>
-    sample_ray(Float time, Float sample1, const Point2f &sample2,
-               const Point2f &sample3, Mask active = true) const;
+    virtual std::pair<Ray3f, Spectrum> sample_ray(Float time, Float sample1,
+                                                  const Point2f &sample2,
+                                                  const Point2f &sample3,
+                                                  Mask active = true) const;
 
     /**
      * \brief Given a reference point in the scene, sample a direction from the
@@ -117,8 +118,7 @@ public:
      *     along with a spectral importance weight.
      */
     virtual std::pair<DirectionSample3f, Spectrum>
-    sample_direction(const Interaction3f &ref,
-                     const Point2f &sample,
+    sample_direction(const Interaction3f &ref, const Point2f &sample,
                      Mask active = true) const;
 
     //! @}
@@ -138,7 +138,6 @@ public:
 
     //! @}
     // =============================================================
-
 
     // =============================================================
     //! @{ \name Other query functions
@@ -160,8 +159,8 @@ public:
      * \return
      *    The emitted radiance or importance
      */
-    virtual Spectrum eval(const SurfaceInteraction3f &si, Mask active = true) const;
-
+    virtual Spectrum eval(const SurfaceInteraction3f &si,
+                          Mask active = true) const;
 
     /// Return the local space to world space transformation
     const AnimatedTransform *world_transform() const {
@@ -180,10 +179,8 @@ public:
      */
     bool needs_sample_3() const { return m_needs_sample_3; }
 
-
     //! @}
     // =============================================================
-
 
     // =============================================================
     //! @{ \name Miscellaneous
@@ -192,13 +189,15 @@ public:
     /// Return the shape, to which the emitter is currently attached
     Shape *shape() { return m_shape; }
 
-    /// Return the shape, to which the emitter is currently attached (const version)
+    /// Return the shape, to which the emitter is currently attached (const
+    /// version)
     const Shape *shape() const { return m_shape; }
 
     /// Return a pointer to the medium that surrounds the emitter
     Medium *medium() { return m_medium; }
 
-    /// Return a pointer to the medium that surrounds the emitter (const version)
+    /// Return a pointer to the medium that surrounds the emitter (const
+    /// version)
     const Medium *medium() const { return m_medium.get(); }
 
     /**
@@ -236,10 +235,10 @@ protected:
 
     virtual ~Endpoint();
 
-protected:
+public:
     ref<const AnimatedTransform> m_world_transform;
     ref<Medium> m_medium;
-    Shape *m_shape = nullptr;
+    Shape *m_shape        = nullptr;
     bool m_needs_sample_2 = true;
     bool m_needs_sample_3 = true;
     std::string m_id;

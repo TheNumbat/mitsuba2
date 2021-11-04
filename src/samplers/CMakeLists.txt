@@ -1,5 +1,6 @@
 set(MTS_PLUGIN_PREFIX "samplers")
 
+add_plugin(tex_shape    tex_shape.cpp)
 add_plugin(independent  independent.cpp)
 add_plugin(stratified   stratified.cpp)
 add_plugin(multijitter  multijitter.cpp)

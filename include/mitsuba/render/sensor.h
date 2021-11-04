@@ -2,8 +2,8 @@
 
 #include <mitsuba/core/spectrum.h>
 #include <mitsuba/core/transform.h>
-#include <mitsuba/render/endpoint.h>
 #include <mitsuba/core/vector.h>
+#include <mitsuba/render/endpoint.h>
 #include <mitsuba/render/film.h>
 #include <mitsuba/render/fwd.h>
 #include <mitsuba/render/interaction.h>
@@ -21,6 +21,8 @@ public:
     // =============================================================
     //! @{ \name Sensor-specific sampling functions
     // =============================================================
+
+    Float importance(const Vector3f &) const { return Float(0.0f); }
 
     /**
      * \brief Importance sample a ray differential proportional to the sensor's
@@ -58,9 +60,8 @@ public:
      *    sensor profile and the actual used sampling density function.
      */
     virtual std::pair<RayDifferential3f, Spectrum>
-    sample_ray_differential(Float time, Float sample1,
-                            const Point2f &sample2, const Point2f &sample3,
-                            Mask active = true) const;
+    sample_ray_differential(Float time, Float sample1, const Point2f &sample2,
+                            const Point2f &sample3, Mask active = true) const;
 
     //! @}
     // =============================================================
@@ -116,7 +117,8 @@ public:
         callback->put_object("sampler", m_sampler.get());
     }
 
-    void parameters_changed(const std::vector<std::string> &/*keys*/ = {}) override {
+    void parameters_changed(
+        const std::vector<std::string> & /*keys*/ = {}) override {
         m_resolution = ScalarVector2f(m_film->crop_size());
     }
 
@@ -133,7 +135,6 @@ protected:
     ScalarFloat m_shutter_open;
     ScalarFloat m_shutter_open_time;
 };
-
 
 /**
  * \brief Projective camera interface
@@ -179,7 +180,7 @@ protected:
 
     virtual ~ProjectiveCamera();
 
-protected:
+public:
     ScalarFloat m_near_clip;
     ScalarFloat m_far_clip;
     ScalarFloat m_focus_distance;
@@ -192,15 +193,15 @@ protected:
 /// Helper function to parse the field of view field of a camera
 extern MTS_EXPORT_RENDER float parse_fov(const Properties &props, float aspect);
 
-template <typename Float> Transform<Point<Float, 4>>
+template <typename Float>
+Transform<Point<Float, 4>>
 perspective_projection(const Vector<int, 2> &film_size,
                        const Vector<int, 2> &crop_size,
-                       const Vector<int, 2> &crop_offset,
-                       Float fov_x,
+                       const Vector<int, 2> &crop_offset, Float fov_x,
                        Float near_clip, Float far_clip) {
 
-    using Vector2f = Vector<Float, 2>;
-    using Vector3f = Vector<Float, 3>;
+    using Vector2f    = Vector<Float, 2>;
+    using Vector3f    = Vector<Float, 3>;
     using Transform4f = Transform<Point<Float, 4>>;
 
     Vector2f film_size_f = Vector2f(film_size),
