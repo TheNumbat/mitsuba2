@@ -222,13 +222,12 @@ public:
         auto Itrafo = trafo.inverse();
 
         // Compute the sample position on the near plane (local camera space).
-        SurfaceInteraction3f pt =
-            sampled_shape->eval_parameterization(s_xy, active);
-        Point3f near_p = Itrafo.transform_affine(pt.p);
-        // Point3f near_p = m_sample_to_camera *
-        //                  Point3f(s_xy.x() + m_principal_point_offset.x(),
-        //                          s_xy.y() + m_principal_point_offset.y(),
-        //                          0.f);
+        // SurfaceInteraction3f pt =
+        //     sampled_shape->eval_parameterization(s_xy, active);
+        // Point3f near_p = Itrafo.transform_affine(pt.p);
+        Point3f near_p = m_sample_to_camera *
+                         Point3f(s_xy.x() + m_principal_point_offset.x(),
+                                 s_xy.y() + m_principal_point_offset.y(), 0.f);
 
         // Convert into a normalized ray direction; adjust the ray interval
         // accordingly.

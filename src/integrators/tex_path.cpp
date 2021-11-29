@@ -188,7 +188,7 @@ public:
         aovs[3] = select(result.second, Float(1.f), Float(0.f));
         aovs[4] = 1.f;
 
-        block->put(p, aovs, active);
+        block->put(pos, aovs, active);
 
         sampler->advance();
     }
