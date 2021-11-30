@@ -1,6 +1,8 @@
 <scene version="2.0.0">
     <integrator type="path_texture_space">
         <integer name="max_depth" value="6"/>
+        <ref id="wall_shape"/>
+        <integrator type="direct"/>
     </integrator>
 
     <sensor type="perspective">
@@ -15,7 +17,7 @@
                     up    ="  0,   1,    0"/>
         </transform>
         <sampler type="independent">  <!-- ldsampler -->
-            <integer name="sample_count" value="128"/>
+            <integer name="sample_count" value="256"/>
         </sampler>
         <film type="hdrfilm">
             <integer name="width" value="256"/>
@@ -67,7 +69,7 @@
         <string name="filename" value="meshes/cbox_greenwall.obj"/>
         <ref id="green"/>
     </shape>
-    <shape type="obj">
+    <shape type="obj" id="wall_shape">
         <string name="filename" value="meshes/cbox_redwall.obj"/>
         <ref id="wall_bsdf"/>
     </shape>
