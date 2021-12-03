@@ -120,10 +120,10 @@ public:
         }
     }
 
-    std::pair<DirectionSample3f, Spectrum>
-    sample_shape_direction(const RayDifferential3f &ray_, const Scene *scene,
-                           Sampler *sampler, const SurfaceInteraction3f &si,
-                           Mask &active) const {
+    DirectionSample3f sample_shape_direction(const RayDifferential3f &ray_,
+                                             const Scene *, Sampler *sampler,
+                                             const SurfaceInteraction3f &si,
+                                             Mask &active) const {
         MTS_MASKED_FUNCTION(ProfilerPhase::SampleEmitterDirection, active);
 
         RayDifferential3f ray = ray_;
@@ -132,22 +132,29 @@ public:
         auto ds = sampled_shape->sample_direction(si, sample, active);
         active &= neq(ds.pdf, 0.f);
 
-        ray = si.spawn_ray(ds.d);
+        return ds;
+    }
 
-        auto [spec, mask] = secondary_integrator->sample(
-            scene, sampler, ray, nullptr, nullptr, active);
+    std::tuple<Spectrum, Mask, SurfaceInteraction3f>
+    get_emissive(const Scene *scene, Sampler *, const RayDifferential3f &ray_,
+                 Mask active) const {
 
-        active &= mask;
+        RayDifferential3f ray = ray_;
+        Spectrum result(0.f);
 
-        if (any_or<true>(active)) {
-            Ray3f shadow_ray(si.p, ds.d,
-                             math::RayEpsilon<Float> * (1.f + hmax(abs(si.p))),
-                             ds.dist * (1.f - math::ShadowEpsilon<Float>),
-                             si.time, si.wavelengths);
-            spec[scene->ray_test(shadow_ray, active)] = 0.f;
+        // ---------------------- First intersection ----------------------
+
+        SurfaceInteraction3f si = scene->ray_intersect(ray, active);
+        Mask valid_ray          = si.is_valid();
+        EmitterPtr emitter      = si.emitter(scene);
+
+        // ---------------- Intersection with emitters ----------------
+
+        if (any_or<true>(neq(emitter, nullptr))) {
+            result[active] += emitter->eval(si, active);
         }
 
-        return { ds, spec };
+        return { result, valid_ray, si };
     }
 
     std::pair<Spectrum, Mask> sample(const Scene *scene, Sampler *sampler,
@@ -155,15 +162,12 @@ public:
                                      const Medium * /* medium */,
                                      Float * /* aovs */,
                                      Mask active) const override {
+        MTS_MASKED_FUNCTION(ProfilerPhase::SamplingIntegratorSample, active);
 
         RayDifferential3f ray = ray_;
 
         // Tracks radiance scaling due to index of refraction changes
         Float eta(1.f);
-
-        // MIS weight for intersected emitters (set by prev. iteration)
-        Float emission_weight(1.f);
-
         Spectrum throughput(1.f), result(0.f);
 
         // ---------------------- First intersection ----------------------
@@ -172,13 +176,14 @@ public:
         Mask valid_ray          = si.is_valid();
         EmitterPtr emitter      = si.emitter(scene);
 
+        // ---------------- Intersection with emitters ----------------
+
         for (int depth = 1;; ++depth) {
 
-            // ---------------- Intersection with emitters ----------------
-
-            if (any_or<true>(neq(emitter, nullptr)))
-                result[active] +=
-                    emission_weight * throughput * emitter->eval(si, active);
+            if (any_or<true>(neq(emitter, nullptr))) {
+                result[active] += throughput * emitter->eval(si, active);
+                active &= eq(emitter, nullptr);
+            }
 
             active &= si.is_valid();
 
@@ -200,66 +205,82 @@ public:
                 ((!is_cuda_array_v<Float> || m_max_depth < 0) && none(active)))
                 break;
 
-            // --------------------- Shape sampling ---------------------
-
             BSDFContext ctx;
             BSDFPtr bsdf = si.bsdf(ray);
-            Mask active_e =
-                active && has_flag(bsdf->flags(), BSDFFlags::Smooth);
 
-            if (likely(any_or<true>(active_e))) {
+            Vector3f wo_world(0.f);
+            Float strategy = sampler->next_1d();
 
-                auto [ds, emitter_val] =
-                    sample_shape_direction(ray, scene, sampler, si, active_e);
-                // active_e &= neq(ds.pdf, 0.f);
+            Mask emit_mask  = strategy > 0.7f;
+            Mask bsdf_mask  = strategy < 0.2f;
+            Mask shape_mask = !emit_mask && !bsdf_mask;
 
-                // Query the BSDF for that emitter-sampled direction
-                Vector3f wo       = si.to_local(ds.d);
-                Spectrum bsdf_val = bsdf->eval(ctx, si, wo, active_e);
-                bsdf_val          = si.to_world_mueller(bsdf_val, -wo, si.wi);
-
-                // Determine density of sampling that same direction using BSDF
-                // sampling
-                Float bsdf_pdf = bsdf->pdf(ctx, si, wo, active_e);
-
-                Float mis = select(ds.delta, 1.f, mis_weight(ds.pdf, bsdf_pdf));
-                result[active_e] += mis * throughput * bsdf_val * emitter_val;
+            // --------------------- Emitter sampling ---------------------
+            {
+                Mask active_e          = emit_mask && active;
+                auto [ds, emitter_val] = scene->sample_emitter_direction(
+                    si, sampler->next_2d(active_e), true, active_e);
+                wo_world[emit_mask] = ds.d;
+                active &= !active_e | neq(ds.pdf, 0.f);
             }
 
             // ----------------------- BSDF sampling ----------------------
-
-            // Sample BSDF * cos(theta)
-            auto [bs, bsdf_val] =
-                bsdf->sample(ctx, si, sampler->next_1d(active),
-                             sampler->next_2d(active), active);
-            bsdf_val = si.to_world_mueller(bsdf_val, -bs.wo, si.wi);
-
-            throughput = throughput * bsdf_val;
-            active &= any(neq(depolarize(throughput), 0.f));
-            if (none_or<false>(active))
-                break;
-
-            eta *= bs.eta;
-
-            // Intersect the BSDF ray against the scene geometry
-            ray                          = si.spawn_ray(si.to_world(bs.wo));
-            SurfaceInteraction3f si_bsdf = scene->ray_intersect(ray, active);
-
-            /* Determine probability of having sampled that same
-               direction using shape sampling. */
-            DirectionSample3f ds(si_bsdf, si);
-            ds.object = sampled_shape;
-
-            if (any_or<true>(neq(emitter, nullptr))) {
-                Float emitter_pdf =
-                    select(neq(emitter, nullptr) &&
-                               !has_flag(bs.sampled_type, BSDFFlags::Delta),
-                           sampled_shape->pdf_direction(si, ds), 0.f);
-
-                emission_weight = mis_weight(bs.pdf, emitter_pdf);
+            {
+                Mask active_bsdf = bsdf_mask && active;
+                auto [bs, bsdf_val] =
+                    bsdf->sample(ctx, si, sampler->next_1d(active_bsdf),
+                                 sampler->next_2d(active_bsdf), active_bsdf);
+                wo_world[bsdf_mask] = si.to_world(bs.wo);
+                active &= !active_bsdf | neq(bs.pdf, 0.f);
             }
 
-            si = std::move(si_bsdf);
+            // ----------------------- Shape sampling ----------------------
+            {
+                Mask active_shape = shape_mask && active;
+                auto ds = sample_shape_direction(ray, scene, sampler, si,
+                                                 active_shape);
+                wo_world[shape_mask] = ds.d;
+                active &= !active_shape | neq(ds.pdf, 0.f);
+            }
+
+            // ------------------
+
+            RayDifferential3f nee_ray = si.spawn_ray(wo_world);
+
+            SurfaceInteraction3f si2 = scene->ray_intersect(nee_ray, active);
+            active &= si2.is_valid();
+            auto [incoming, emask] = secondary_integrator->sample(
+                scene, sampler, nee_ray, nullptr, nullptr, active);
+
+            active &= emask;
+
+            Vector3f wo_local = si.to_local(wo_world);
+            DirectionSample3f ds(si2, si);
+
+            auto bsdf_val = bsdf->eval(ctx, si, wo_local, active);
+            bsdf_val      = si.to_world_mueller(bsdf_val, -wo_local, si.wi);
+
+            Float bsdf_pdf    = bsdf->pdf(ctx, si, wo_local, active);
+            Float emitter_pdf = scene->pdf_emitter_direction(si, ds);
+            Float shape_pdf   = sampled_shape->pdf_direction(si, ds);
+            Float pdf = 0.2f * bsdf_pdf + 0.3f * emitter_pdf + 0.5f * shape_pdf;
+
+            active &= neq(pdf, 0.f);
+            result[active] += throughput * incoming * bsdf_val / pdf;
+
+            {
+                auto [bs, bsdf_val2] =
+                    bsdf->sample(ctx, si, sampler->next_1d(active),
+                                 sampler->next_2d(active), active);
+                active &= neq(bs.pdf, 0.f);
+                throughput = throughput * bsdf_val2;
+                ray        = si.spawn_ray(si.to_world(bs.wo));
+                active &= any(neq(depolarize(throughput), 0.f));
+                SurfaceInteraction3f si_bsdf =
+                    scene->ray_intersect(ray, active);
+                active &= si_bsdf.is_valid();
+                si = std::move(si_bsdf);
+            }
         }
 
         return { result, valid_ray };
